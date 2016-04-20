@@ -26,8 +26,8 @@
 #include "timer.h"
 #include "messagebus.h"
 
-#ifdef CONFIG_ACCELEROMETER
-#include "vti_as.h"
+#ifdef CONFIG_MOD_ACCELEROMETER
+#include "as.h"
 #endif
 
 #define ALL_BUTTONS				0x1F
@@ -159,7 +159,7 @@ void PORT2_ISR(void)
 	}
 
 	/* Handle accelerometer */
-	#ifdef CONFIG_ACCELEROMETER
+	#ifdef CONFIG_MOD_ACCELEROMETER
 	/* Check if accelerometer interrupt flag */
 	if ((P2IFG & AS_INT_PIN) == AS_INT_PIN)
 		as_last_interrupt = 1;
@@ -169,6 +169,3 @@ void PORT2_ISR(void)
 	 latest interrupt */
 	P2IV = 0x00;
 }
-
-
-

@@ -22,7 +22,9 @@
 /* drivers */
 #include "drivers/rtca.h"
 #include "drivers/display.h"
-#include "drivers/vti_as.h"
+#include "drivers/as.h"
+
+#include "drivers/bmp_as.h"
 #include "drivers/buzzer.h"
 
 // *************************************************************************************************
@@ -42,13 +44,15 @@
 // This parameter is ignored if in background mode!
 #define ACCEL_MEASUREMENT_TIMEOUT		(60u)
 
-// Conversion values from data to mgrav taken from CMA3000-D0x datasheet (rev 0.4, table 4)
-const uint16_t mgrav_per_bit[7] = { 18, 36, 71, 143, 286, 571, 1142 };
+// Conversion values from data to mgrav taken from BMA250 datasheet (rev 1.05, figure 4)
+const uint16_t bmp_mgrav_per_bit[7] = { 16, 31, 63, 125, 250, 500, 1000 };
 
+extern uint8_t bmp_used;
 
 // *** Tunes for accelerometer synestesia
 
 static note smb[] = {0x2588, 0x000F};
+
 
 // *************************************************************************************************
 // Global Variable section
@@ -60,13 +64,8 @@ struct accel
 	// Sensor raw data
 	uint8_t			xyz[3];
 
-
-
 	// Acceleration data in 10 * mgrav
 	uint16_t		data;
-
-	// Sensor old data for FIR filter
-	uint16_t		data_prev;
 
 	// Timeout: should be decreased with the 1 minute RTC event
 	uint16_t			timeout;
@@ -88,8 +87,6 @@ static enum {
 
 struct accel sAccel;
 
-// Global flag for proper acceleration sensor operation
-extern uint8_t as_ok;
 
 // *************************************************************************************************
 // @fn          is_acceleration_measurement
@@ -136,7 +133,7 @@ uint16_t convert_acceleration_value_to_mgrav(uint8_t value)
 	for (i=0; i<7; i++)
 	{
 
-		result += ((value & (BIT(i)))>>i) * mgrav_per_bit[i];
+		result += ((value & (BIT(i)))>>i) * bmp_mgrav_per_bit[i];
 	}
 
 	return (result);
@@ -145,37 +142,37 @@ uint16_t convert_acceleration_value_to_mgrav(uint8_t value)
 void update_menu()
 {
 	// Depending on the state what do we do?
-	switch (submenu_state) {
-		case VIEW_SET_MODE:
-
-			if(as_config.mode==FALL_MODE)
-				display_chars(0, LCD_SEG_L1_3_0 , "FALL", SEG_SET);
-			else if(as_config.mode==MEASUREMENT_MODE)
-				display_chars(0, LCD_SEG_L1_3_0 , "MEAS", SEG_SET);
-			else if(as_config.mode==ACTIVITY_MODE)
-				display_chars(0, LCD_SEG_L1_3_0 , "ACTI", SEG_SET);
-
-			display_chars(0, LCD_SEG_L2_4_0 , "MODE", SEG_SET);
-			break;
-
-		case VIEW_SET_PARAMS:
-
-			display_chars(0, LCD_SEG_L2_5_0 , "SETS", SEG_SET);
-			break;
-
-		case VIEW_STATUS:
-
-			display_chars(0,LCD_SEG_L2_5_0 , "STAT", SEG_SET);
-			break;
-
-		case VIEW_AXIS:
-
-			display_chars(0,LCD_SEG_L2_5_0 , "DATA", SEG_SET);
-			break;
-
-		default:
-			break;
-	}
+	// switch (submenu_state) {
+	// 	case VIEW_SET_MODE:
+	//
+	// 		if(as_config.mode==FALL_MODE)
+	// 			display_chars(0, LCD_SEG_L1_3_0 , "FALL", SEG_SET);
+	// 		else if(as_config.mode==MEASUREMENT_MODE)
+	// 			display_chars(0, LCD_SEG_L1_3_0 , "MEAS", SEG_SET);
+	// 		else if(as_config.mode==ACTIVITY_MODE)
+	// 			display_chars(0, LCD_SEG_L1_3_0 , "ACTI", SEG_SET);
+	//
+	// 		display_chars(0, LCD_SEG_L2_4_0 , "MODE", SEG_SET);
+	// 		break;
+	//
+	// 	case VIEW_SET_PARAMS:
+	//
+	// 		display_chars(0, LCD_SEG_L2_5_0 , "SETS", SEG_SET);
+	// 		break;
+	//
+	// 	case VIEW_STATUS:
+	//
+	// 		display_chars(0,LCD_SEG_L2_5_0 , "STAT", SEG_SET);
+	// 		break;
+	//
+	// 	case VIEW_AXIS:
+	//
+	// 		//display_chars(0,LCD_SEG_L2_5_0 , "DATA", SEG_SET);
+	// 		break;
+	//
+	// 	default:
+	// 		break;
+	// }
 
 }
 
@@ -184,110 +181,115 @@ void update_menu()
 static void num_pressed()
 {
 	// Change the sub menu code
-	submenu_state++;
-	submenu_state %= VIEWMODE_MAX;
+	// submenu_state++;
+	// submenu_state %= VIEWMODE_MAX;
 	// now update the menu
-	update_menu();
+	//update_menu();
 
-
+	if (++sAccel.view_style > 2)
+        sAccel.view_style = 0;
+		// Reset current acceleration value
+	sAccel.data = 0;
 }
 
 static void up_btn()
 {
 
-	// Depending on the state what do we do?
-	switch (submenu_state) {
-		case VIEW_SET_MODE:
-			as_config.mode++;
-			as_config.mode %= 3;
-			change_mode(as_config.mode);
-			update_menu();
-
-			break;
-
-		case VIEW_SET_PARAMS:
-			_printf(0,LCD_SEG_L1_3_0 , "%04x", as_read_register(ADDR_CTRL));
-			break;
-
-		case VIEW_STATUS:
-			_printf(0,LCD_SEG_L1_3_0, "%1u", as_status.all_flags);
-
-			break;
-
-		case VIEW_AXIS:
-
-			display_chars(0,LCD_SEG_L1_3_0 , "TODO", SEG_SET);
-			break;
-
-		default:
-			break;
-	}
+	// // Depending on the state what do we do?
+	// switch (submenu_state) {
+	// 	case VIEW_SET_MODE:
+	// 		// as_config.mode++;
+	// 		// as_config.mode %= 3;
+	// 		// change_mode(as_config.mode);
+	// 		// update_menu();
+	//
+	// 		break;
+	//
+	// 	case VIEW_SET_PARAMS:
+	// 		_printf(0,LCD_SEG_L1_3_0 , "%04x", as_read_register(ADDR_CTRL));
+	// 		break;
+	//
+	// 	case VIEW_STATUS:
+	// 		_printf(0,LCD_SEG_L1_3_0, "%1u", as_status.all_flags);
+	//
+	// 		break;
+	//
+	// 	case VIEW_AXIS:
+	//
+	// 		display_chars(0,LCD_SEG_L1_3_0 , "TODO", SEG_SET);
+	// 		break;
+	//
+	// 	default:
+	// 		break;
+	// }
 	/* update menu screen */
-	lcd_screen_activate(0);
+	//lcd_screen_activate(0);
 }
 
 static void down_btn()
 {
 	//not necessary at the moment
 	/* update menu screen */
-	lcd_screen_activate(0);
+	//lcd_screen_activate(0);
 }
 
 /* Star button long press callback. */
 // This set/unset the background mode
 static void star_long_pressed()
 {
-	if(sAccel.mode==ACCEL_MODE_ON)
-	{
-		sAccel.mode = ACCEL_MODE_BACKGROUND;
-		//set the R symbol on so that is propagated when the user leaves the mode
- 		display_symbol(0, LCD_ICON_RECORD, SEG_SET | BLINK_ON);
-	}
-	else if(sAccel.mode==ACCEL_MODE_BACKGROUND)
-	{
-
-		sAccel.mode = ACCEL_MODE_ON;
-		//unset the R symbol
-		display_symbol(0, LCD_ICON_RECORD, SEG_SET | BLINK_OFF);
-	}
+	// if(sAccel.mode==ACCEL_MODE_ON)
+	// {
+	// 	sAccel.mode = ACCEL_MODE_BACKGROUND;
+	// 	//set the R symbol on so that is propagated when the user leaves the mode
+ // 		display_symbol(0, LCD_ICON_RECORD, SEG_SET | BLINK_ON);
+	// }
+	// else if(sAccel.mode==ACCEL_MODE_BACKGROUND)
+	// {
+	//
+	// 	sAccel.mode = ACCEL_MODE_ON;
+	// 	//unset the R symbol
+	// 	display_symbol(0, LCD_ICON_RECORD, SEG_SET | BLINK_OFF);
+	// }
 	/* update menu screen */
-	lcd_screen_activate(0);
+	//print_debug();
+			//buzzer_play(smb);
 }
+
 
 void display_data(uint8_t display_id)
 {
 	uint8_t raw_data=0;
 	uint16_t accel_data=0;
 
+
 	// Convert X/Y/Z values to mg
 	switch (sAccel.view_style)
 	{
 		case DISPLAY_ACCEL_X:
 			raw_data = sAccel.xyz[0];
-			display_char(display_id,LCD_SEG_L1_3, 'X', SEG_ON);
+			display_char(display_id,LCD_SEG_L1_3, 'X', SEG_SET);
 			break;
 		case DISPLAY_ACCEL_Y:
 			raw_data = sAccel.xyz[1];
-			display_char(display_id,LCD_SEG_L1_3, 'Y', SEG_ON);
+			display_char(display_id,LCD_SEG_L1_3, 'Y', SEG_SET);
 			break;
 		case DISPLAY_ACCEL_Z:
 			raw_data = sAccel.xyz[2];
-			display_char(display_id,LCD_SEG_L1_3, 'Z', SEG_ON);
+			display_char(display_id,LCD_SEG_L1_3, 'Z', SEG_SET);
 			break;
 	}
 
+	accel_data = convert_acceleration_value_to_mgrav(raw_data);
+
 	// Filter acceleration
-	#ifdef FIXEDPOINT
-	accel_data = (uint16_t)(((sAccel.data_prev * 2) + (sAccel.data * 8)) / 10);
-	#else
-	accel_data = (uint16_t)((sAccel.data_prev * 0.2) + (sAccel.data * 0.8));
-	#endif
+	accel_data = (uint16_t) ((accel_data * 0.2) + (sAccel.data * 0.8));
 
 	// Store average acceleration
-	sAccel.data = sAccel.data_prev;
+	sAccel.data = accel_data;
+
 
 	// Display acceleration in x.xx format in the second screen this is real time!
-	display_chars(display_id,LCD_SEG_L1_2_0, _sprintf("%03s", accel_data), SEG_ON);
+	display_chars(display_id,LCD_SEG_L1_2_0, _sprintf("%03s", accel_data), SEG_SET);
 
 	// Display sign
 	if (acceleration_value_is_positive(raw_data)) {
@@ -298,6 +300,7 @@ void display_data(uint8_t display_id)
 		display_symbol(display_id,LCD_SYMB_ARROW_DOWN, SEG_ON);
 	}
 }
+
 static void as_event(enum sys_message msg)
 {
 
@@ -308,9 +311,8 @@ static void as_event(enum sys_message msg)
 		//if timeout is over disable the accelerometer
 		if(sAccel.timeout<1)
 		{
-			//disable accelerometer to save power
-			as_stop();
-			//update the mode to remember
+			// Stop acceleration sensor
+	        bmp_as_stop();
 			sAccel.mode = ACCEL_MODE_OFF;
 		}
 
@@ -318,42 +320,23 @@ static void as_event(enum sys_message msg)
 	if ( (msg & SYS_MSG_AS_INT) == SYS_MSG_AS_INT)
 	{
 		//Check the vti register for status information
-		as_status.all_flags=as_get_status();
+		//as_status.all_flags=as_get_status();
 		//TODO For debugging only
-		_printf(0, LCD_SEG_L1_1_0, "%1u", as_status.all_flags);
-		buzzer_play(smb);
+		//_printf(0, LCD_SEG_L1_1_0, "%1u", bmp_used);
+		//buzzer_play(smb);
 		//if we were in free fall or motion detection mode check for the event
-		if(as_status.int_status.falldet || as_status.int_status.motiondet){
 
 			//if such an event is detected enable the symbol
 			//display_symbol(0, LCD_ICON_ALARM , SEG_SET | BLINK_ON);
 
-			//read the data
-			as_get_data(sAccel.xyz);
-			//display_data(0);
+			// Get data from sensor
+	        bmp_as_get_data(sAccel.xyz);
+
+			display_data(0);
 			/* update menu screen */
-			lcd_screen_activate(0);
+			//lcd_screen_activate(0);
 
-		}//if we were in measurment mode do a measurement and put it in the virtual screen
-		else
-		{
-
-			//display_symbol(0, LCD_ICON_ALARM , SEG_SET | BLINK_OFF);
-			display_data(1);
-			/* refresh to accelerometer screen only if in that modality */
-			if (submenu_state== VIEW_AXIS )lcd_screen_activate(1);
-
-		}
 	}
-	/* The 1 Hz timer is used to refresh the menu screen */
-	if ( (msg & SYS_MSG_RTC_SECOND) == SYS_MSG_RTC_SECOND)
-	{
-	/*check the status register for debugging purposes */
-	_printf(0, LCD_SEG_L1_1_0, "%1u", as_read_register(ADDR_INT_STATUS));
-	/* update menu screen */
-	lcd_screen_activate(0);
-	}
-
 }
 
 /* Enter the accelerometer menu */
@@ -362,11 +345,11 @@ static void acc_activated()
 
 
 	//register to the system bus for vti events as well as the RTC minute events
-	sys_messagebus_register(&as_event, SYS_MSG_AS_INT | SYS_MSG_RTC_MINUTE | SYS_MSG_RTC_SECOND);
+	sys_messagebus_register(&as_event, SYS_MSG_AS_INT | SYS_MSG_RTC_MINUTE );
 
 
 	/* create two screens, the first is always the active one */
-	lcd_screens_create(2);
+	lcd_screens_create(1);
 
 	/* screen 0 will contain the menu structure and screen 1 the raw accelerometer data */
 
@@ -401,13 +384,13 @@ static void acc_activated()
 			sAccel.mode = ACCEL_MODE_ON;
 
 			// Start with mode selection
-			submenu_state=VIEW_SET_MODE;
+			submenu_state=VIEW_AXIS;
 
 			// Select Axis X
 			sAccel.view_style=DISPLAY_ACCEL_Z;
 
-			// Start sensor in motion detection mode
-			as_start(ACTIVITY_MODE);
+			// Start sensor
+            bmp_as_start();
 			// After this call interrupts will be generated
 		}
 
@@ -415,8 +398,8 @@ static void acc_activated()
 		{
 			display_chars(0, LCD_SEG_L1_3_0, "FAIL", SEG_SET);
 		}
-		display_chars(0, LCD_SEG_L1_3_0 , "ACTI", SEG_SET);
-		display_chars(0, LCD_SEG_L2_4_0 , "MODE", SEG_SET);
+		// display_chars(0, LCD_SEG_L1_3_0 , "ACTI", SEG_SET);
+		// display_chars(0, LCD_SEG_L2_4_0 , "MODE", SEG_SET);
 
 
 	}
@@ -447,26 +430,32 @@ static void acc_deactivated()
 
 	/* clean up screen */
 
-	display_clear(0, 1);
-	display_clear(0, 2);
+	display_clear(0,1);
+
 
 
 	/* do not disable anything if in background mode */
 	if	(sAccel.mode == ACCEL_MODE_BACKGROUND) return;
-	else 	/* clear symbols only if not in backround mode*/
+	 	/* clear symbols only if not in backround mode*/
 	//display_symbol(0, LCD_ICON_ALARM , SEG_SET | BLINK_OFF);
 
 	/* otherwise shutdown all the stuff
 	** deregister from the message bus */
 	sys_messagebus_unregister_all(&as_event);
 	/* Stop acceleration sensor */
-	as_stop();
+    bmp_as_stop();
 
 	/* Clear mode */
 	sAccel.mode = ACCEL_MODE_OFF;
 }
 
 
+void do_acceleration_measurement(void)
+{
+    // Get data from sensor
+        bmp_as_get_data(sAccel.xyz);
+
+}
 
 void mod_accelerometer_init()
 {
@@ -474,7 +463,6 @@ void mod_accelerometer_init()
 	//if this is called only one time after reboot there are some important things to initialise
 	//Initialise sAccel struct?
 	sAccel.data=0;
-	sAccel.data_prev=0;
 	// Set timeout counter
 	sAccel.timeout = ACCEL_MEASUREMENT_TIMEOUT;
 	/* Clear mode */

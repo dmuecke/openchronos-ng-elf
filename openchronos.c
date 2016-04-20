@@ -66,9 +66,12 @@
 /* Driver */
 #include "messagebus.h"
 #include "menu.h"
+#include "drivers/bmp_ps.h"
 #include "drivers/display.h"
-#include "drivers/vti_as.h"
-#include "drivers/vti_ps.h"
+#include "drivers/bmp_as.h"
+#include "drivers/as.h"
+#include "drivers/bmp_ps.h"
+#include "drivers/ps.h"
 #include "drivers/radio.h"
 #include "drivers/buzzer.h"
 #include "drivers/ports.h"
@@ -78,6 +81,13 @@
 #include "drivers/rtca.h"
 #include "drivers/temperature.h"
 #include "drivers/battery.h"
+
+// Global flag set if Bosch sensors are used
+uint8_t bmp_used;
+/* Global flag used to adjust the difference in RF settings
+ * (Base frequency and output power)
+ * between Chronos with Black PCB and Chronos with White PCB */
+uint8_t chronos_black;
 
 void check_events(void)
 {
@@ -187,7 +197,7 @@ void init_application(void)
 	radio_reset();
 	radio_powerdown();
 
-#ifdef CONFIG_ACCELEROMETER
+#ifdef CONFIG_MOD_ACCELEROMETER
 	// ---------------------------------------------------------------------
 	// Init acceleration sensor
 	as_init();
@@ -206,10 +216,6 @@ void init_application(void)
 	/* Init buzzer */
 	buzzer_init();
 
-	// ---------------------------------------------------------------------
-	// Init pressure sensor
-	ps_init();
-
 	/* drivers/battery */
 	battery_init();
 
@@ -221,6 +227,22 @@ void init_application(void)
 		infomem_init(INFOMEM_C, INFOMEM_C + 2 * INFOMEM_SEGMENT_SIZE);
 	}
 #endif
+
+	// ---------------------------------------------------------------------
+	// Init pressure sensor
+	bmp_ps_init();
+	// Bosch sensor not found?
+	if (!ps_ok)
+	{
+		chronos_black = 1;
+		bmp_used = 0;
+
+	}
+	else
+	{
+		bmp_used = 1;
+		chronos_black = 0;
+	}
 }
 
 
@@ -305,6 +327,3 @@ void helpers_loop(uint8_t *value, uint8_t lower, uint8_t upper, int8_t step)
 			*value = upper;
 	}
 }
-
-
-
